@@ -610,7 +610,7 @@ func (s *server) followerLoop() {
 	electionTimeout := s.ElectionTimeout()
 	timeoutChan := afterBetween(s.ElectionTimeout(), s.ElectionTimeout()*2)
 
-	for {
+	for s.State() == Follower {
 		var err error
 		update := false
 		select {
@@ -665,11 +665,6 @@ func (s *server) followerLoop() {
 			since = time.Now()
 			timeoutChan = afterBetween(s.ElectionTimeout(), s.ElectionTimeout()*2)
 		}
-
-		// Exit loop on state change.
-		if s.State() != Follower {
-			break
-		}
 	}
 }
 
@@ -684,7 +679,7 @@ func (s *server) candidateLoop() {
 		s.DispatchEvent(newEvent(LeaderChangeEventType, s.leader, prevLeader))
 	}
 
-	for {
+	for s.State() == Candidate {
 		// Increment current term, vote for self.
 		s.currentTerm++
 		s.votedFor = s.name
@@ -752,12 +747,6 @@ func (s *server) candidateLoop() {
 				break
 			}
 		}
-
-		// break when we are not candidate
-		if s.State() != Candidate {
-			break
-		}
-
 		// continue when timeout happened
 	}
 }
@@ -774,10 +763,14 @@ func (s *server) leaderLoop() {
 		peer.startHeartbeat()
 	}
 
+	// Commit a NOP after the server becomes leader. From the Raft paper:
+	// "Upon election: send initial empty AppendEntries RPCs (heartbeat) to
+	// each server; repeat during idle periods to prevent election timeouts
+	// (§5.2)". The heartbeats started above do the "idle" period work.
 	go s.Do(NOPCommand{})
 
 	// Begin to collect response from followers
-	for {
+	for s.State() == Leader {
 		var err error
 		select {
 		case e := <-s.c:
@@ -804,11 +797,6 @@ func (s *server) leaderLoop() {
 			// Callback to event.
 			e.c <- err
 		}
-
-		// Exit loop on state change.
-		if s.State() != Leader {
-			break
-		}
 	}
 
 	s.syncedPeer = nil
@@ -817,7 +805,7 @@ func (s *server) leaderLoop() {
 func (s *server) snapshotLoop() {
 	s.setState(Snapshotting)
 
-	for {
+	for s.State() == Snapshotting {
 		var err error
 
 		e := <-s.c
@@ -838,11 +826,6 @@ func (s *server) snapshotLoop() {
 		}
 		// Callback to event.
 		e.c <- err
-
-		// Exit loop on state change.
-		if s.State() != Snapshotting {
-			break
-		}
 	}
 }
 
